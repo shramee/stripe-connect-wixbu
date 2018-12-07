@@ -47,10 +47,7 @@ class LLMS_Stripe_API {
 		);
 
 		if ( in_array( $resource, [ 'charges', 'subscriptions' ] ) ) {
-			$connect_success = $this->connect_fields( $resource, $headers, $data );
-			if ( ! $connect_success ) {
-				return $connect_success;
-			}
+			$this->add_txn_meta( $resource, $headers, $data );
 		}
 
 		// attempt to call the API
@@ -87,56 +84,60 @@ class LLMS_Stripe_API {
 	 * @param array $data Request data
 	 * @return bool Success
 	 */
-	private function connect_fields( $resource, &$headers, &$data ) {
-			$plan = new LLMS_Access_Plan( $_GET['plan'] );
-			if ( $plan ) {
-				$product     = $plan->get_product();
-				if ( $product && $product->author ) {
-					$stripe_account = get_user_meta( $product->author, 'stripe_user_id', 1 );
-					if ( $stripe_account ) {
-						if ( ! empty( $data['amount'] ) ) {
+	private function add_txn_meta( $resource, &$headers, &$data ) {
+		$plan = new LLMS_Access_Plan( $_GET['plan'] );
+		if ( $plan ) {
+			$product = $plan->get_product();
+			if ( $product && $product->author ) {
 
-							$tax_rate = 0;
-							$tax_name = '';
-							$taxes      = Taxes_LLMS_Quaderno::get_tax();
-							if ( ! $taxes['error'] && $taxes['data']['name'] ) {
-								$tax_rate = $taxes['data']['rate'];
-								$tax_name = $taxes['data']['name'];
-							}
-							$tax = $tax_rate / ( 100 + $tax_rate );
-							$wixbu = WIXBU_COMMISSION / ( 100 + $tax_rate );
-
-							$deductions = $tax + $wixbu;
-
-							$user = wp_get_current_user();
-
-							$actual_amount = $data['amount'] / 100;
-
-							$data['metadata']['Instructor'] = $product->author;
-							$data['metadata']['Student'] = $user->user_login;
-							$data['metadata']['StudentName'] = $user->display_name;
-							$data['metadata']['TaxDetails'] = "$tax_name: $tax_rate%";
-							$data['metadata']['Tax'] = $this->format_price( $actual_amount * $tax );
-							$data['metadata']['NetReceived'] = $this->format_price( $actual_amount * ( 1 - $tax ) );
-							$data['metadata']['Wixbu'] = $this->format_price( $actual_amount * $wixbu );
-							$data['metadata']['YourShare'] = $this->format_price( $actual_amount * ( 1 - $wixbu - $tax ) );
-
-							if ( $resource == 'charges' ) {
-								$data['application_fee'] = ceil( $data['amount'] * $deductions );
-							} else {
-								$data['application_fee_percent'] = $deductions * 100;
-							}
-						}
-						$headers['Stripe-Account'] = $stripe_account;
-						$data['source'] = $this->get_instructor_customer_token( $headers, $data );
-						unset( $data['customer'] );
+				if ( ! empty( $data['amount'] ) ) {
+					$tax_rate = 0;
+					$tax_name = '';
+					$taxes    = Taxes_LLMS_Quaderno::get_tax();
+					if ( ! $taxes['error'] && $taxes['data']['name'] ) {
+						$tax_rate = $taxes['data']['rate'];
+						$tax_name = $taxes['data']['name'];
 					}
+					$tax   = $tax_rate / ( 100 + $tax_rate );
+					$wixbu = WIXBU_COMMISSION / ( 100 + $tax_rate );
+
+					$user = wp_get_current_user();
+
+					$actual_amount = $data['amount'] / 100;
+
+					$data['metadata']['Instructor']       = $product->author;
+					$data['metadata']['Student']          = $user->user_login;
+					$data['metadata']['StudentName']      = $user->display_name;
+					$data['metadata']['TaxDetails']       = "$tax_name: $tax_rate%";
+					$data['metadata']['Tax']              = $this->format_price( $actual_amount * $tax );
+					$data['metadata']['NetReceived']      = $this->format_price( $actual_amount * ( 1 - $tax ) );
+					$data['metadata']['Wixbu']            = $this->format_price( $actual_amount * $wixbu );
+					$data['metadata']['InstructorsShare'] = $this->format_price( $actual_amount * ( 1 - $wixbu - $tax ) );
+					$data['transfer_group'] = "wixbu_instructor_{$product->author}";
+
+					// add order meta
+					update_post_meta( $plan->id, 'tax', $actual_amount * $tax );
+					update_post_meta( $plan->id, 'instructor', $product->author );
+					update_post_meta( $plan->id, 'wixbu_payout_pending', $product->author );
+					update_post_meta( $plan->id, 'wixbu_order_data|' . date( 'Ymd' ), [
+						'amount'     => $actual_amount,
+						'date'       => time(),
+						'tax'        => $actual_amount * $tax,
+						'tax_info'   => "$tax_name|$tax_rate",
+						'instructor' => $product->author,
+						'stripe_id'  => get_user_meta( $product->author, 'stripe_user_id', 1 ),
+					] );
 				}
+
+				// Don't charge on behalf of instructor
+				// $this->connect_account_data( $tax_rate, $product, $resource, $headers, $data );
 			}
-			if ( empty( $headers['Stripe-Account'] ) ) {
-				return $this->set_error( __( 'Sorry, Payment method not added by instructor.', 'wixbu' ), 'no_payment_method', new stdClass() );
-			}
+		}
+
 		return true;
+		if ( empty( $headers['Stripe-Account'] ) ) {
+			return $this->set_error( __( 'Sorry, Payment method not added by instructor.', 'wixbu' ), 'no_payment_method', new stdClass() );
+		}
 	}
 
 	private function format_price( $price ) {
@@ -279,6 +280,27 @@ class LLMS_Stripe_API {
 		$this->error_object = $obj;
 
 		return false;
+	}
+
+	private function connect_account_data( $tax_rate, $product, $resource, &$headers, &$data ) {
+		$stripe_account = get_user_meta( $product->author, 'stripe_user_id', 1 );
+		if ( $stripe_account ) {
+
+			$tax   = $tax_rate / ( 100 + $tax_rate );
+			$wixbu = WIXBU_COMMISSION / ( 100 + $tax_rate );
+
+			$deductions = $tax + $wixbu;
+
+			$headers['Stripe-Account'] = $stripe_account;
+			$data['source']            = $this->get_instructor_customer_token( $headers, $data );
+			unset( $data['customer'] );
+
+			if ( $resource == 'charges' ) {
+				$data['application_fee'] = ceil( $data['amount'] * $deductions );
+			} else {
+				$data['application_fee_percent'] = $deductions * 100;
+			}
+		}
 	}
 
 }

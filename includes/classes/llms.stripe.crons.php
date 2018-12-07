@@ -19,6 +19,7 @@ class LLMS_Stripe_Crons
 
 		// add_action( 'init', array( $this, 'cancel_expired_subscriptions' ) );
 		add_action( 'llms_stripe_cancel_expired_subscriptions', array( $this, 'cancel_expired_subscriptions' ) );
+		add_action( 'wixbu_do_payouts', array( $this, 'wixbu_do_payouts' ) );
 
 	}
 
@@ -128,14 +129,91 @@ class LLMS_Stripe_Crons
 	public function schedule()
 	{
 
+//		$this->wixbu_do_payouts();die();
+
 		if ( ! wp_next_scheduled( 'llms_stripe_cancel_expired_subscriptions' ) ) {
 
 			wp_schedule_event( time(), 'daily', 'llms_stripe_cancel_expired_subscriptions' );
 
 		}
 
+		if ( ! wp_next_scheduled( 'wixbu_do_payouts' ) && class_exists( 'Wixbu_Instructors' ) ) {
+
+			$date = Wixbu_Instructors::instance()->next_payout_date();
+
+			wp_schedule_single_event( strtotime( $date ), 'wixbu_do_payouts' );
+
+		}
 	}
 
+	public function wixbu_do_payouts() {
+		/** @var $wpdb wpdb */
+		global $wpdb;
+
+		$date = date( 'Ymd', strtotime( '- 30 days' ) );
+
+		$results = $wpdb->get_results(
+			"SELECT t2.* FROM `$wpdb->postmeta` as t1 JOIN `$wpdb->postmeta` AS t2 ON t1.post_id =  t2.post_id " .
+			"WHERE t2.meta_key BETWEEN 'wixbu_order_data' " .
+			"AND 'wixbu_order_data|{$date}z' AND t1.meta_key LIKE 'wixbu_payout_pending'" );
+
+		$instructors_to_pay = [];
+
+		foreach ( $results as $result ) {
+			$data = unserialize( $result->meta_value );
+			$data['post_id'] = $result->post_id;
+			if ( empty( $instructors_to_pay[ $data['instructor'] ] ) ) {
+				$instructors_to_pay[ $data['instructor'] ] = [
+					'orders'    => [],
+					'gross'     => [],
+					'stripe_id' => '',
+				];
+			}
+
+			if ( isset( $data['stripe_id'] ) ) {
+				$instructors_to_pay[ $data['instructor'] ]['stripe_id'] = $data['stripe_id'];
+			}
+
+			$instructors_to_pay[ $data['instructor'] ]['gross'][] = ( $data['amount'] - $data['tax'] );
+			$instructors_to_pay[ $data['instructor'] ]['orders'][] = $result->post_id;
+
+			// @TODO Make payment to instructor here
+		}
+
+		foreach ( $instructors_to_pay as $intructor_user_id => $instructor ) {
+
+			$amt = array_sum( $instructor['gross'] );
+			$amt *= INSTRUCTOR_SHARE / 100;
+			$amt *= .95; // Stripe fees 5%
+
+			if ( empty( $instructor['stripe_id'] ) ) {
+				$instructor['stripe_id'] = get_user_meta( $intructor_user_id, 'stripe_user_id', 1 );
+			}
+			$transfer_data = [
+			'amount' => floor( $amt * 100 ),
+			'currency' => get_lifterlms_currency(),
+			'destination' => $instructor['stripe_id'],
+			'transfer_group' => "wixbu_instructor_{$intructor_user_id}",
+			];
+
+			var_dump( $transfer_data );
+
+			$transfer_data['amount'] = 160;
+
+			$result = Wixbu_Stripe()->call_api( 'transfers', $transfer_data );
+
+			$result = $result->get_result();
+
+			$instructor['user_id'] = $intructor_user_id;
+			$instructor['paid'] = $amt;
+
+			do_action( 'wixbu_intructor_paid_out', $result, $instructor );
+
+			foreach ( $instructor['orders'] as $order ) {
+				delete_post_meta( $order, 'wixbu_payout_pending' );
+			}
+		}
+	}
 
 }
 return new LLMS_Stripe_Crons();

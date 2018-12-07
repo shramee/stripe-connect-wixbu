@@ -117,18 +117,18 @@ final class Wixbu_Stripe_Connect {
 	 */
 	private function includes() {
 
-		require_once LLMS_STRIPE_PLUGIN_DIR . 'includes/classes/llms.gateway.stripe.php';
-		require_once LLMS_STRIPE_PLUGIN_DIR . 'includes/classes/llms.stripe.api.php';
-		require_once LLMS_STRIPE_PLUGIN_DIR . 'includes/classes/llms.stripe.customer.php';
-		require_once LLMS_STRIPE_PLUGIN_DIR . 'includes/classes/llms.stripe.crons.php';
+		require_once 'includes/classes/llms.gateway.stripe.php';
+		require_once 'includes/classes/llms.stripe.api.php';
+		require_once 'includes/classes/llms.stripe.customer.php';
+		require_once 'includes/classes/llms.stripe.crons.php';
 
 		if( is_admin() ) {
 
-			require_once LLMS_STRIPE_PLUGIN_DIR . 'includes/classes/llms.stripe.database.php';
+			require_once 'includes/classes/llms.stripe.database.php';
 
 		} else {
 
-			require_once LLMS_STRIPE_PLUGIN_DIR . 'includes/classes/llms.stripe.assets.php';
+			require_once 'includes/classes/llms.stripe.assets.php';
 
 		}
 

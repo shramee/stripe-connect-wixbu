@@ -287,18 +287,14 @@ class LLMS_Payment_Gateway_Stripe extends LLMS_Payment_Gateway {
 		if ( $plan ) {
 			$product = $plan->get_product();
 			if( $product && $product->author ) {
-				if ( get_user_meta( $product->author, 'stripe_user_id', 1 ) ) {
-					ob_start();
-					llms_get_template( 'stripe-cc-form.php', array(
-						'cards' => $cards,
-						'gateway' => $this,
-						'selected' => ( $this->get_id() === LLMS()->payment_gateways()->get_default_gateway() ),
-					), '', LLMS_STRIPE_PLUGIN_DIR . 'templates/' );
-					return apply_filters( 'llms_get_gateway_admin_title', ob_get_clean(), $this->id );
-				} else {
-					$style = '.llms-checkout-section-content .llms-notice.wixbu-no-method{position:absolute;top:52px;bottom:0;z-index:9;background:#fff;text-align:center;padding-top:16%;}';
-					return "<style>$style</style>" . '<div class="llms-debug llms-notice wixbu-no-method">' . __( 'Sorry, Payment method not added by instructor.', 'wixbu' ) . '</div>';
-				}
+				ob_start();
+				llms_get_template( 'stripe-cc-form.php', array(
+					'cards'    => $cards,
+					'gateway'  => $this,
+					'selected' => ( $this->get_id() === LLMS()->payment_gateways()->get_default_gateway() ),
+				), '', LLMS_STRIPE_PLUGIN_DIR . 'templates/' );
+
+				return apply_filters( 'llms_get_gateway_admin_title', ob_get_clean(), $this->id );
 			}
 		}
 
@@ -844,7 +840,7 @@ class LLMS_Payment_Gateway_Stripe extends LLMS_Payment_Gateway {
 		$time = date('Ymd');
 		update_user_meta(
 			$meta['Instructor'],
-			"$type-$time::$meta[Student]::$meta[ProductName]",
+			"$type-$time::$meta[Student]::$meta[ProductID]",
 			"$amount::$net::$meta[ProductName]"
 		);
 	}
